@@ -122,27 +122,34 @@ const App: React.FC = () => {
           if (value !== undefined && value !== null && value !== "") {
             fieldNamesArray.forEach((pdfFieldName) => {
               try {
-                const field = form.getField(pdfFieldName);
-                const fieldType = field.constructor.name;
-
-                if (fieldType.includes("PDFTextField")) {
+                // Try as text field first (most common)
+                try {
                   const textField = form.getTextField(pdfFieldName);
                   textField.setText(String(value));
-                  console.log(`  ✓ Set "${pdfFieldName}" = "${value}"`);
-                } else if (fieldType.includes("PDFCheckBox")) {
-                  const checkbox = form.getCheckBox(pdfFieldName);
-                  const isChecked =
-                    value.toLowerCase() === "true" ||
-                    value.toLowerCase() === "yes" ||
-                    value === "1";
-                  if (isChecked) {
-                    checkbox.check();
-                  } else {
-                    checkbox.uncheck();
-                  }
                   console.log(
-                    `  ✓ Set checkbox "${pdfFieldName}" = ${isChecked}`
+                    `  ✓ Set text field "${pdfFieldName}" = "${value}"`
                   );
+                } catch (textErr) {
+                  // If text field fails, try as checkbox
+                  try {
+                    const checkbox = form.getCheckBox(pdfFieldName);
+                    const isChecked =
+                      value.toLowerCase() === "true" ||
+                      value.toLowerCase() === "yes" ||
+                      value === "1";
+                    if (isChecked) {
+                      checkbox.check();
+                    } else {
+                      checkbox.uncheck();
+                    }
+                    console.log(
+                      `  ✓ Set checkbox "${pdfFieldName}" = ${isChecked}`
+                    );
+                  } catch (checkErr) {
+                    console.warn(
+                      `  ⚠ Field "${pdfFieldName}" found but couldn't set (not text or checkbox)`
+                    );
+                  }
                 }
               } catch (err) {
                 console.warn(`  ⚠ Field "${pdfFieldName}" not found`);
