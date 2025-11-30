@@ -13,28 +13,7 @@ import Papa from "papaparse";
 import { PDFDocument } from "pdf-lib";
 import JSZip from "jszip";
 
-interface CSVData {
-  [key: string]: string;
-}
-
-// Hard-coded mapping from CSV columns to PDF field names
-// Each CSV column can map to a single field (string) or multiple fields (array)
-const FIELD_MAPPING: { [key: string]: string | string[] } = {
-  County: ["Court County", "7.3"], // Field #1 and #26
-  Landlord: "π", // Field #3 - Plaintiff
-  Tenant: ["∆", "7.0"], // Field #4 - Defendant, Field #23
-  "Street Address": "7.1", // Tenant address
-  City: "7.2", // Tenant city
-  Zip: "7.4", // Tenant zip
-  // State field #8 - not in CSV, will need manual entry or default value
-  // Phone field #10 - not in CSV
-  // Email field #11 - not in CSV
-  // Financial fields (Rent Owed, Damages, Total, etc.) - leaving blank for manual entry
-  // Date fields (Prior Notice, Summons Date, Time) - leaving blank for manual entry
-  // All other numbered fields - leaving blank for manual entry
-};
-
-const App: React.FC = () => {
+export function App() {
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [csvData, setCsvData] = useState<CSVData[]>([]);
@@ -157,6 +136,19 @@ const App: React.FC = () => {
             });
           }
         });
+
+        // Set the county
+        const textField = form.getTextField(PDF_FIELDS.COURT_ADDRESS);
+        const county = rowData[CSV_COLUMNS.COUNTY] ?? "";
+        const {
+          address,
+          city,
+          zip: postal_code,
+          state,
+        } = COURT_ADDRESSES.get(county.toLowerCase()) ?? {};
+        if (COURT_ADDRESSES.has(county.toLowerCase())) {
+          textField.setText(`${address}, ${city}, ${state} ${postal_code}`);
+        }
 
         // Save the filled PDF
         const filledPdfBytes = await pdfDoc.save();
@@ -351,6 +343,113 @@ const App: React.FC = () => {
       </div>
     </div>
   );
+}
+
+interface CSVData {
+  [key: string]: string;
+}
+const CSV_COLUMNS = {
+  COUNTY: "County",
+  LANDLORD: "Landlord",
+  TENANT: "Tenant",
+  STREET_ADDRESS: "Street Address",
+  CITY: "City",
+  ZIP: "Zip",
+} as const;
+
+const PDF_FIELDS = {
+  COURT_ADDRESS: "Court Address",
+  COURT_COUNTY: "Court County",
+} as const;
+
+// Hard-coded mapping from CSV columns to PDF field names
+// Each CSV column can map to a single field (string) or multiple fields (array)
+const FIELD_MAPPING: { [key: string]: string | string[] } = {
+  [CSV_COLUMNS.COUNTY]: [PDF_FIELDS.COURT_COUNTY, "7.3"], // Field #1 and #26
+  [CSV_COLUMNS.LANDLORD]: "π", // Field #3 - Plaintiff
+  [CSV_COLUMNS.TENANT]: ["∆", "7.0"], // Field #4 - Defendant, Field #23
+  [CSV_COLUMNS.STREET_ADDRESS]: "7.1", // Tenant address
+  [CSV_COLUMNS.CITY]: "7.2", // Tenant city
+  [CSV_COLUMNS.ZIP]: "7.4", // Tenant zip
+  // State field #8 - not in CSV, will need manual entry or default value
+  // Phone field #10 - not in CSV
+  // Email field #11 - not in CSV
+  // Financial fields (Rent Owed, Damages, Total, etc.) - leaving blank for manual entry
+  // Date fields (Prior Notice, Summons Date, Time) - leaving blank for manual entry
+  // All other numbered fields - leaving blank for manual entry
 };
 
-export default App;
+/**
+ * Map county names to their addresses
+ */
+const COURT_ADDRESSES = new Map<
+  string,
+  { address: string; city: string; state: string; zip: number }
+>([
+  [
+    "boulder",
+    { address: "1777 6TH ST.", city: "BOULDER", state: "CO", zip: 80302 },
+  ],
+  [
+    "arapahoe",
+    {
+      address: "1790 West Littleton Blvd",
+      city: "Littleton",
+      state: "CO",
+      zip: 80120,
+    },
+  ],
+  [
+    "adams",
+    {
+      address: "1100 Judicial Center Dr",
+      city: "Brighton",
+      state: "CO",
+      zip: 80601,
+    },
+  ],
+  [
+    "jefferson",
+    {
+      address: "100 Jefferson County Pkwy",
+      city: "Golden",
+      state: "CO",
+      zip: 80401,
+    },
+  ],
+  [
+    "broomfield",
+    { address: "17 Descombes Dr", city: "Broomfield", state: "CO", zip: 80020 },
+  ],
+  [
+    "douglas",
+    {
+      address: "4000 Justice Way",
+      city: "Castle Rock",
+      state: "CO",
+      zip: 80109,
+    },
+  ],
+  [
+    "el paso",
+    {
+      address: "270 S Tejon St",
+      city: "Colorado Springs",
+      state: "CO",
+      zip: 80903,
+    },
+  ],
+  [
+    "weld",
+    { address: "901 9th Ave", city: "Greeley", state: "CO", zip: 80631 },
+  ],
+  [
+    "denver",
+    {
+      address: "Colorado 1437 Bannock Street, Room 135 Denver",
+      city: "Denver",
+      state: "CO",
+      zip: 80202,
+    },
+  ],
+]);
