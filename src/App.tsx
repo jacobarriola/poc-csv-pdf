@@ -9,11 +9,34 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import Papa from "papaparse";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, PDFForm } from "pdf-lib";
 import JSZip from "jszip";
 
+interface CSVData {
+  [key: string]: string;
+}
+
+interface TemplateConfig {
+  id: string;
+  name: string;
+  pdfFile: string;
+  fieldMapping: { [key: string]: string | string[] };
+  customLogic?: (form: PDFForm, rowData: CSVData) => void;
+}
+
 export function App() {
+  const [selectedTemplate, setSelectedTemplate] = useState<string>("");
+  const [currentTemplate, setCurrentTemplate] = useState<TemplateConfig | null>(
+    null
+  );
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [csvData, setCsvData] = useState<CSVData[]>([]);
@@ -21,6 +44,56 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
+
+  const handleTemplateChange = async (value: string) => {
+    setSelectedTemplate(value);
+    setCsvFile(null);
+    setCsvData([]);
+    setError(null);
+    setSuccess(null);
+
+    if (value) {
+      const template = TEMPLATES.find((t) => t.id === value);
+      if (template) {
+        setCurrentTemplate(template);
+
+        // Load PDF template
+        try {
+          const response = await fetch(`/templates/${template.pdfFile}`);
+          if (!response.ok) {
+            throw new Error(`Failed to load PDF template: ${template.pdfFile}`);
+          }
+          const blob = await response.blob();
+          const file = new File([blob], template.pdfFile, {
+            type: "application/pdf",
+          });
+          setPdfFile(file);
+          setSuccess(`Template loaded: ${template.name}`);
+
+          // Log PDF field names for debugging
+          // const pdfBytes = await blob.arrayBuffer();
+          // const pdfDoc = await PDFDocument.load(pdfBytes);
+          // const form = pdfDoc.getForm();
+          // const fields = form.getFields();
+          // console.log(`\n=== PDF Field Names for ${template.name} ===`);
+          // fields.forEach((field, index) => {
+          //   console.log(`${index}: "${field.getName()}"`);
+          // });
+          // console.log(`Total fields: ${fields.length}\n`);
+        } catch (err) {
+          setError(
+            `Error loading PDF template: ${
+              err instanceof Error ? err.message : "Unknown error"
+            }`
+          );
+          setPdfFile(null);
+        }
+      }
+    } else {
+      setCurrentTemplate(null);
+      setPdfFile(null);
+    }
+  };
 
   const handleCsvUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -48,20 +121,14 @@ export function App() {
     }
   };
 
-  const handlePdfUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && file.type === "application/pdf") {
-      setPdfFile(file);
-      setError(null);
-      setSuccess("PDF template loaded successfully");
-    } else {
-      setError("Please upload a valid PDF file");
-    }
-  };
-
   const fillPdfForm = async () => {
+    if (!currentTemplate) {
+      setError("Please select a template");
+      return;
+    }
+
     if (!csvData || csvData.length === 0 || !pdfFile) {
-      setError("Please upload both CSV and PDF files");
+      setError("Please upload CSV file");
       return;
     }
 
@@ -71,109 +138,88 @@ export function App() {
     setProgress(null);
 
     try {
-      // Read PDF template once
       const pdfTemplateBytes = await pdfFile.arrayBuffer();
-
-      // Create a zip file
       const zip = new JSZip();
 
-      // Process each row in the CSV
       for (let i = 0; i < csvData.length; i++) {
         const rowData = csvData[i];
         setProgress(`Processing ${i + 1} of ${csvData.length}...`);
 
-        // Load a fresh copy of the PDF for each row
         const pdfDoc = await PDFDocument.load(pdfTemplateBytes);
         const form = pdfDoc.getForm();
 
         console.log(`\n=== Processing Row ${i + 1} ===`);
         console.log("Row Data:", rowData);
 
-        // Fill form fields based on mapping
-        Object.entries(FIELD_MAPPING).forEach(([csvColumn, pdfFieldNames]) => {
-          const value = rowData[csvColumn];
+        // Fill form fields based on current template's mapping
+        Object.entries(currentTemplate.fieldMapping).forEach(
+          ([csvColumn, pdfFieldNames]) => {
+            const value = rowData[csvColumn];
+            const fieldNamesArray = Array.isArray(pdfFieldNames)
+              ? pdfFieldNames
+              : [pdfFieldNames];
 
-          // Handle both single field (string) and multiple fields (array)
-          const fieldNamesArray = Array.isArray(pdfFieldNames)
-            ? pdfFieldNames
-            : [pdfFieldNames];
-
-          if (value !== undefined && value !== null && value !== "") {
-            fieldNamesArray.forEach((pdfFieldName) => {
-              try {
-                // Try as text field first (most common)
+            if (value !== undefined && value !== null && value !== "") {
+              fieldNamesArray.forEach((pdfFieldName) => {
                 try {
-                  const textField = form.getTextField(pdfFieldName);
-                  textField.setText(String(value));
-                  console.log(
-                    `  ✓ Set text field "${pdfFieldName}" = "${value}"`
-                  );
-                } catch (textErr) {
-                  // If text field fails, try as checkbox
                   try {
-                    const checkbox = form.getCheckBox(pdfFieldName);
-                    const isChecked =
-                      value.toLowerCase() === "true" ||
-                      value.toLowerCase() === "yes" ||
-                      value === "1";
-                    if (isChecked) {
-                      checkbox.check();
-                    } else {
-                      checkbox.uncheck();
-                    }
+                    const textField = form.getTextField(pdfFieldName);
+                    textField.setText(String(value));
                     console.log(
-                      `  ✓ Set checkbox "${pdfFieldName}" = ${isChecked}`
+                      `  ✓ Set text field "${pdfFieldName}" = "${value}"`
                     );
-                  } catch (checkErr) {
-                    console.warn(
-                      `  ⚠ Field "${pdfFieldName}" found but couldn't set (not text or checkbox)`
-                    );
+                  } catch {
+                    try {
+                      const checkbox = form.getCheckBox(pdfFieldName);
+                      const isChecked =
+                        value.toLowerCase() === "true" ||
+                        value.toLowerCase() === "yes" ||
+                        value === "1";
+                      if (isChecked) {
+                        checkbox.check();
+                      } else {
+                        checkbox.uncheck();
+                      }
+                      console.log(
+                        `  ✓ Set checkbox "${pdfFieldName}" = ${isChecked}`
+                      );
+                    } catch {
+                      console.warn(
+                        `  ⚠ Field "${pdfFieldName}" couldn't be set`
+                      );
+                    }
                   }
+                } catch {
+                  console.warn(`  ⚠ Field "${pdfFieldName}" not found`);
                 }
-              } catch (err) {
-                console.warn(`  ⚠ Field "${pdfFieldName}" not found`);
-              }
-            });
+              });
+            }
           }
-        });
+        );
 
-        // Set the county
-        const textField = form.getTextField(PDF_FIELDS.COURT_ADDRESS);
-        const county = rowData[CSV_COLUMNS.COUNTY] ?? "";
-        const {
-          address,
-          city,
-          zip: postal_code,
-          state,
-        } = COURT_ADDRESSES.get(county.toLowerCase()) ?? {};
-        if (COURT_ADDRESSES.has(county.toLowerCase())) {
-          textField.setText(`${address}, ${city}, ${state} ${postal_code}`);
+        // Apply template-specific custom logic
+        if (currentTemplate.customLogic) {
+          currentTemplate.customLogic(form, rowData);
         }
 
-        // Save the filled PDF
         const filledPdfBytes = await pdfDoc.save();
 
-        // Generate filename using tenant name or row number
         const tenantName = rowData["Tenant"] || `Row_${i + 1}`;
         const safeFilename = tenantName
           .replace(/[^a-z0-9]/gi, "_")
           .substring(0, 50);
         const filename = `${safeFilename}_${i + 1}.pdf`;
 
-        // Add to zip
         zip.file(filename, filledPdfBytes);
       }
 
       setProgress("Creating zip file...");
 
-      // Generate the zip file
       const zipBlob = await zip.generateAsync({ type: "blob" });
-
-      // Download the zip
       const url = URL.createObjectURL(zipBlob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `filled-forms-${
+      link.download = `${currentTemplate.id}-${
         new Date().toISOString().split("T")[0]
       }.zip`;
       link.click();
@@ -204,7 +250,7 @@ export function App() {
             PDF Form Filler
           </h1>
           <p className="text-gray-600">
-            Upload a CSV and PDF template to generate filled forms
+            Select a template and upload CSV to generate filled forms
           </p>
         </div>
 
@@ -229,159 +275,220 @@ export function App() {
           </Alert>
         )}
 
-        <div className="grid md:grid-cols-2 gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5" />
-                CSV Data
-              </CardTitle>
-              <CardDescription>
-                Upload your CSV file with form data
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-gray-400 transition-colors">
-                  <input
-                    type="file"
-                    accept=".csv"
-                    onChange={handleCsvUpload}
-                    className="hidden"
-                    id="csv-upload"
-                  />
-                  <label htmlFor="csv-upload" className="cursor-pointer">
-                    <Upload className="h-8 w-8 mx-auto mb-2 text-gray-400" />
-                    <p className="text-sm text-gray-600">
-                      {csvFile ? csvFile.name : "Click to upload CSV"}
-                    </p>
-                  </label>
-                </div>
-                {csvData && csvData.length > 0 && (
-                  <div className="text-xs bg-gray-100 p-3 rounded">
-                    <p className="font-semibold mb-1">
-                      Loaded {csvData.length} row(s)
-                    </p>
-                    <p className="text-gray-600">
-                      Columns: {Object.keys(csvData[0]).join(", ")}
-                    </p>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5" />
-                PDF Template
-              </CardTitle>
-              <CardDescription>Upload your PDF form template</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-gray-400 transition-colors">
-                <input
-                  type="file"
-                  accept=".pdf"
-                  onChange={handlePdfUpload}
-                  className="hidden"
-                  id="pdf-upload"
-                />
-                <label htmlFor="pdf-upload" className="cursor-pointer">
-                  <Upload className="h-8 w-8 mx-auto mb-2 text-gray-400" />
-                  <p className="text-sm text-gray-600">
-                    {pdfFile ? pdfFile.name : "Click to upload PDF"}
-                  </p>
-                </label>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
         <Card>
           <CardHeader>
-            <CardTitle>Field Mapping (Hard-coded)</CardTitle>
-            <CardDescription>Current CSV to PDF field mappings</CardDescription>
+            <CardTitle>Select Template</CardTitle>
+            <CardDescription>
+              Choose which PDF form template to use
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 gap-2 text-sm">
-              {Object.entries(FIELD_MAPPING).map(([csv, pdf]) => (
-                <div
-                  key={csv}
-                  className="flex items-center gap-2 p-2 bg-gray-50 rounded"
-                >
-                  <span className="font-mono text-blue-600">{csv}</span>
-                  <span className="text-gray-400">→</span>
-                  <span className="font-mono text-green-600">
-                    {Array.isArray(pdf) ? pdf.join(", ") : pdf}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <Select
+              value={selectedTemplate}
+              onValueChange={handleTemplateChange}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select a template..." />
+              </SelectTrigger>
+              <SelectContent>
+                {TEMPLATES.map((template) => (
+                  <SelectItem key={template.id} value={template.id}>
+                    {template.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </CardContent>
         </Card>
 
-        <div className="flex justify-center">
-          <Button
-            onClick={fillPdfForm}
-            disabled={!csvFile || !pdfFile || loading || csvData.length === 0}
-            size="lg"
-            className="w-full md:w-auto"
-          >
-            {loading ? (
-              <>{progress || "Processing..."}</>
-            ) : (
-              <>
-                <Download className="mr-2 h-5 w-5" />
-                Generate{" "}
-                {csvData.length > 0 ? `${csvData.length} PDFs` : "PDFs"} (Zip)
-              </>
-            )}
-          </Button>
-        </div>
+        {currentTemplate && (
+          <>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileText className="h-5 w-5" />
+                  CSV Data
+                </CardTitle>
+                <CardDescription>
+                  Upload your CSV file with form data
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-gray-400 transition-colors">
+                    <input
+                      type="file"
+                      accept=".csv"
+                      onChange={handleCsvUpload}
+                      className="hidden"
+                      id="csv-upload"
+                    />
+                    <label htmlFor="csv-upload" className="cursor-pointer">
+                      <Upload className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+                      <p className="text-sm text-gray-600">
+                        {csvFile ? csvFile.name : "Click to upload CSV"}
+                      </p>
+                    </label>
+                  </div>
+                  {csvData && csvData.length > 0 && (
+                    <div className="text-xs bg-gray-100 p-3 rounded">
+                      <p className="font-semibold mb-1">
+                        Loaded {csvData.length} row(s)
+                      </p>
+                      <p className="text-gray-600">
+                        Columns: {Object.keys(csvData[0]).join(", ")}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Field Mapping</CardTitle>
+                <CardDescription>
+                  CSV columns mapped to PDF fields for {currentTemplate.name}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  {Object.entries(currentTemplate.fieldMapping).map(
+                    ([csv, pdf]) => (
+                      <div
+                        key={csv}
+                        className="flex items-center gap-2 p-2 bg-gray-50 rounded"
+                      >
+                        <span className="font-mono text-blue-600">{csv}</span>
+                        <span className="text-gray-400">→</span>
+                        <span className="font-mono text-green-600">
+                          {Array.isArray(pdf) ? pdf.join(", ") : pdf}
+                        </span>
+                      </div>
+                    )
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="flex justify-center">
+              <Button
+                onClick={fillPdfForm}
+                disabled={
+                  !csvFile || !pdfFile || loading || csvData.length === 0
+                }
+                size="lg"
+                className="w-full md:w-auto"
+              >
+                {loading ? (
+                  <>{progress || "Processing..."}</>
+                ) : (
+                  <>
+                    <Download className="mr-2 h-5 w-5" />
+                    Generate{" "}
+                    {csvData.length > 0
+                      ? `${csvData.length} PDFs`
+                      : "PDFs"}{" "}
+                    (Zip)
+                  </>
+                )}
+              </Button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-interface CSVData {
-  [key: string]: string;
-}
-const CSV_COLUMNS = {
-  COUNTY: "County",
-  LANDLORD: "Landlord",
-  TENANT: "Tenant",
-  STREET_ADDRESS: "Street Address",
-  CITY: "City",
-  ZIP: "Zip",
-} as const;
+// Template 1: Eviction Complaint
+const EVICTION_COMPLAINT_TEMPLATE: TemplateConfig = {
+  id: "eviction-complaint",
+  name: "Eviction Complaint (JDF101)",
+  pdfFile: "jdf101.pdf",
+  fieldMapping: {
+    County: ["Court County", "7.3"],
+    Landlord: "π",
+    Tenant: ["∆", "7.0"],
+    "Street Address": "7.1",
+    City: "7.2",
+    Zip: "7.4",
+  },
+  customLogic: (form, rowData) => {
+    // Set court address based on county
+    try {
+      const textField = form.getTextField("Court Address");
+      const county = rowData["County"] ?? "";
+      const courtInfo = COURT_ADDRESSES.get(county.toLowerCase());
 
-const PDF_FIELDS = {
-  COURT_ADDRESS: "Court Address",
-  COURT_COUNTY: "Court County",
-} as const;
-
-// Hard-coded mapping from CSV columns to PDF field names
-// Each CSV column can map to a single field (string) or multiple fields (array)
-const FIELD_MAPPING: { [key: string]: string | string[] } = {
-  [CSV_COLUMNS.COUNTY]: [PDF_FIELDS.COURT_COUNTY, "7.3"], // Field #1 and #26
-  [CSV_COLUMNS.LANDLORD]: "π", // Field #3 - Plaintiff
-  [CSV_COLUMNS.TENANT]: ["∆", "7.0"], // Field #4 - Defendant, Field #23
-  [CSV_COLUMNS.STREET_ADDRESS]: "7.1", // Tenant address
-  [CSV_COLUMNS.CITY]: "7.2", // Tenant city
-  [CSV_COLUMNS.ZIP]: "7.4", // Tenant zip
-  // State field #8 - not in CSV, will need manual entry or default value
-  // Phone field #10 - not in CSV
-  // Email field #11 - not in CSV
-  // Financial fields (Rent Owed, Damages, Total, etc.) - leaving blank for manual entry
-  // Date fields (Prior Notice, Summons Date, Time) - leaving blank for manual entry
-  // All other numbered fields - leaving blank for manual entry
+      if (courtInfo) {
+        const { address, city, state, zip } = courtInfo;
+        textField.setText(`${address}, ${city}, ${state} ${zip}`);
+      }
+    } catch {
+      console.warn("Could not set Court Address field");
+    }
+  },
 };
 
-/**
- * Map county names to their addresses
- */
+// Template 2: Demand for Compliance
+const DFC_TEMPLATE: TemplateConfig = {
+  id: "demand-compliance",
+  name: "Demand for Compliance (DFC Form)",
+  pdfFile: "dfc_form.pdf",
+  fieldMapping: {
+    Tenant: "0.0",
+    "Rent Owed": "1A.1",
+    "Street Address": "4.1",
+    City: "4.2",
+    County: "4.3",
+    "Monthly Rent": "4.7",
+    Cure: "0.2",
+    Date: "1A.2",
+  },
+  customLogic(form, rowData) {
+    // Format and set date (remove day, keep month year)
+    try {
+      const dateField = form.getTextField("1A.2");
+      const fullDate = rowData["Date"]; // "November 15, 2025"
+      if (fullDate) {
+        // Remove day from "November 15, 2025" -> "November 2025"
+        const formattedDate = fullDate.replace(/\s\d+,/, ""); // Removes " 15,"
+        dateField.setText(formattedDate);
+      }
+    } catch {
+      console.warn("Could not set date field");
+    }
+
+    // Remove dollar sign from rent owed
+    try {
+      const cure = form.getTextField("1A.1");
+      const fullCure = rowData["Rent Owed"];
+      if (fullCure) {
+        const formattedCure = fullCure.replace("$", "");
+        cure.setText(formattedCure);
+      }
+    } catch {
+      console.warn("Could not format rent owed");
+    }
+
+    // Remove dollar sign from monthly rent
+    try {
+      const rent = form.getTextField("4.7");
+      const fullRent = rowData["Monthly Rent"];
+      if (fullRent) {
+        const formattedRent = fullRent.replace("$", "");
+        rent.setText(formattedRent);
+      }
+    } catch {
+      console.warn("Could not format monthly rent");
+    }
+  },
+};
+
+// All available templates
+const TEMPLATES: TemplateConfig[] = [EVICTION_COMPLAINT_TEMPLATE, DFC_TEMPLATE];
+
 const COURT_ADDRESSES = new Map<
   string,
   { address: string; city: string; state: string; zip: number }
