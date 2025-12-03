@@ -413,6 +413,8 @@ const EVICTION_COMPLAINT_TEMPLATE: TemplateConfig = {
     "Street Address": "7.1",
     City: "7.2",
     Zip: "7.4",
+    "Prior Notice": ["8.1", "8.5"],
+    "Prior Notice 2nd": "8.4",
   },
   customLogic: (form, rowData) => {
     // Set court address based on county
