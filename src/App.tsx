@@ -443,23 +443,11 @@ const DFC_TEMPLATE: TemplateConfig = {
     City: "4.2",
     County: "4.3",
     "Monthly Rent": "4.7",
+    "Months of rent": "1A.2",
     Cure: "0.2",
-    Date: "1A.2",
+    Date: "6.2",
   },
   customLogic(form, rowData) {
-    // Format and set date (remove day, keep month year)
-    try {
-      const dateField = form.getTextField("1A.2");
-      const fullDate = rowData["Date"]; // "November 15, 2025"
-      if (fullDate) {
-        // Remove day from "November 15, 2025" -> "November 2025"
-        const formattedDate = fullDate.replace(/\s\d+,/, ""); // Removes " 15,"
-        dateField.setText(formattedDate);
-      }
-    } catch {
-      console.warn("Could not set date field");
-    }
-
     // Remove dollar sign from rent owed
     try {
       const cure = form.getTextField("1A.1");
