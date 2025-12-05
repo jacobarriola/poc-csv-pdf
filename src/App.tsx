@@ -415,6 +415,9 @@ const EVICTION_COMPLAINT_TEMPLATE: TemplateConfig = {
     Zip: "7.4",
     "Prior Notice": ["8.1", "8.5"],
     "Prior Notice 2nd": "8.4",
+    "Rent Owed": "10A.2",
+    "Months of Rent": "10A.4",
+    "Rent Per Diem": "10A.5",
   },
   customLogic: (form, rowData) => {
     // Set court address based on county
@@ -429,6 +432,22 @@ const EVICTION_COMPLAINT_TEMPLATE: TemplateConfig = {
       }
     } catch {
       console.warn("Could not set Court Address field");
+    }
+
+    // Format interest rate
+    try {
+      const interest = form.getTextField("10A.5");
+      const fullInterest = rowData["Rent Per Diem"];
+
+      if (fullInterest) {
+        const formattedInterest = new Intl.NumberFormat("en-US", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }).format(Number(fullInterest));
+        interest.setText(formattedInterest);
+      }
+    } catch {
+      console.warn("Could not format interest rate");
     }
   },
 };
