@@ -418,8 +418,45 @@ const EVICTION_COMPLAINT_TEMPLATE: TemplateConfig = {
     "Rent Owed": "10A.2",
     "Months of Rent": "10A.4",
     "Rent Per Diem": "10A.5",
+    Damages: "12.1",
+    Total: "12.3",
   },
   customLogic: (form, rowData) => {
+    // Set signature dates
+    try {
+      const d = new Date();
+      const dateField = form.getTextField("Sig1_Date");
+      const monthField = form.getTextField("Sig1_Month");
+      const yearField = form.getTextField("Sig1_Year");
+
+      dateField.setText(String(d.getDate()));
+      monthField.setText(d.toLocaleString("en-US", { month: "long" }));
+      yearField.setText(String(d.getFullYear()));
+    } catch (error) {
+      console.warn("Could not set signature. " + error);
+    }
+    // Set eviction explanation field
+    try {
+      const EVICTION_EXPLANATION = "Non-payment of utilities and lease charges";
+      const evictionExplanationField = form.getTextField("11.0");
+
+      if (!evictionExplanationField) {
+        throw new Error("Field not found.");
+      }
+
+      const damages = rowData["Damages"];
+
+      if (damages) {
+        evictionExplanationField.setText(
+          `${EVICTION_EXPLANATION} in the amount ${damages}`
+        );
+      } else {
+        evictionExplanationField.setText(EVICTION_EXPLANATION);
+      }
+    } catch (e) {
+      console.warn("Could not set eviction explanation field. " + e);
+    }
+
     // Set court address based on county
     try {
       const textField = form.getTextField("Court Address");
