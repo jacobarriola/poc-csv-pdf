@@ -24,21 +24,26 @@ interface CSVData {
   [key: string]: string;
 }
 
+interface PdfOutput {
+  filename: string;
+  displayName: string;
+  fieldMapping: { [key: string]: string | string[] };
+  customLogic?: (form: PDFForm, rowData: CSVData) => void;
+}
+
 interface TemplateConfig {
   id: string;
   name: string;
-  pdfFile: string;
-  fieldMapping: { [key: string]: string | string[] };
-  customLogic?: (form: PDFForm, rowData: CSVData) => void;
+  pdfOutputs: PdfOutput[];
 }
 
 export function App() {
   const [selectedTemplate, setSelectedTemplate] = useState<string>("");
   const [currentTemplate, setCurrentTemplate] = useState<TemplateConfig | null>(
-    null
+    null,
   );
   const [csvFile, setCsvFile] = useState<File | null>(null);
-  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pdfFiles, setPdfFiles] = useState<Map<string, File>>(new Map());
   const [csvData, setCsvData] = useState<CSVData[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,41 +62,49 @@ export function App() {
       if (template) {
         setCurrentTemplate(template);
 
-        // Load PDF template
+        // Load all PDF templates for this template
+        const loadedPdfs = new Map<string, File>();
         try {
-          const response = await fetch(`/templates/${template.pdfFile}`);
-          if (!response.ok) {
-            throw new Error(`Failed to load PDF template: ${template.pdfFile}`);
-          }
-          const blob = await response.blob();
-          const file = new File([blob], template.pdfFile, {
-            type: "application/pdf",
-          });
-          setPdfFile(file);
-          setSuccess(`Template loaded: ${template.name}`);
+          for (const output of template.pdfOutputs) {
+            const response = await fetch(`/templates/${output.filename}`);
+            if (!response.ok) {
+              throw new Error(
+                `Failed to load PDF template: ${output.filename}`,
+              );
+            }
+            const blob = await response.blob();
+            const file = new File([blob], output.filename, {
+              type: "application/pdf",
+            });
+            loadedPdfs.set(output.filename, file);
 
-          // Log PDF field names for debugging
-          // const pdfBytes = await blob.arrayBuffer();
-          // const pdfDoc = await PDFDocument.load(pdfBytes);
-          // const form = pdfDoc.getForm();
-          // const fields = form.getFields();
-          // console.log(`\n=== PDF Field Names for ${template.name} ===`);
-          // fields.forEach((field, index) => {
-          //   console.log(`${index}: "${field.getName()}"`);
-          // });
-          // console.log(`Total fields: ${fields.length}\n`);
+            // Log PDF field names for debugging (commented out by default)
+            // const pdfBytes = await blob.arrayBuffer();
+            // const pdfDoc = await PDFDocument.load(pdfBytes);
+            // const form = pdfDoc.getForm();
+            // const fields = form.getFields();
+            // console.log(`\n=== PDF Field Names for ${output.displayName} ===`);
+            // fields.forEach((field, index) => {
+            //   console.log(`${index}: "${field.getName()}"`);
+            // });
+            // console.log(`Total fields: ${fields.length}\n`);
+          }
+          setPdfFiles(loadedPdfs);
+          setSuccess(
+            `Template loaded: ${template.name} (${template.pdfOutputs.length} PDF(s))`,
+          );
         } catch (err) {
           setError(
             `Error loading PDF template: ${
               err instanceof Error ? err.message : "Unknown error"
-            }`
+            }`,
           );
-          setPdfFile(null);
+          setPdfFiles(new Map());
         }
       }
     } else {
       setCurrentTemplate(null);
-      setPdfFile(null);
+      setPdfFiles(new Map());
     }
   };
 
@@ -108,7 +121,7 @@ export function App() {
           if (results.data && results.data.length > 0) {
             setCsvData(results.data as CSVData[]);
             setSuccess(
-              `CSV loaded successfully - ${results.data.length} row(s) found`
+              `CSV loaded successfully - ${results.data.length} row(s) found`,
             );
           }
         },
@@ -127,7 +140,7 @@ export function App() {
       return;
     }
 
-    if (!csvData || csvData.length === 0 || !pdfFile) {
+    if (!csvData || csvData.length === 0 || pdfFiles.size === 0) {
       setError("Please upload CSV file");
       return;
     }
@@ -138,79 +151,97 @@ export function App() {
     setProgress(null);
 
     try {
-      const pdfTemplateBytes = await pdfFile.arrayBuffer();
       const zip = new JSZip();
+      let totalPdfsGenerated = 0;
 
+      // Process each row in the CSV
       for (let i = 0; i < csvData.length; i++) {
         const rowData = csvData[i];
-        setProgress(`Processing ${i + 1} of ${csvData.length}...`);
-
-        const pdfDoc = await PDFDocument.load(pdfTemplateBytes);
-        const form = pdfDoc.getForm();
-
-        console.log(`\n=== Processing Row ${i + 1} ===`);
-        console.log("Row Data:", rowData);
-
-        // Fill form fields based on current template's mapping
-        Object.entries(currentTemplate.fieldMapping).forEach(
-          ([csvColumn, pdfFieldNames]) => {
-            const value = rowData[csvColumn];
-            const fieldNamesArray = Array.isArray(pdfFieldNames)
-              ? pdfFieldNames
-              : [pdfFieldNames];
-
-            if (value !== undefined && value !== null && value !== "") {
-              fieldNamesArray.forEach((pdfFieldName) => {
-                try {
-                  try {
-                    const textField = form.getTextField(pdfFieldName);
-                    textField.setText(String(value));
-                    console.log(
-                      `  ✓ Set text field "${pdfFieldName}" = "${value}"`
-                    );
-                  } catch {
-                    try {
-                      const checkbox = form.getCheckBox(pdfFieldName);
-                      const isChecked =
-                        value.toLowerCase() === "true" ||
-                        value.toLowerCase() === "yes" ||
-                        value === "1";
-                      if (isChecked) {
-                        checkbox.check();
-                      } else {
-                        checkbox.uncheck();
-                      }
-                      console.log(
-                        `  ✓ Set checkbox "${pdfFieldName}" = ${isChecked}`
-                      );
-                    } catch {
-                      console.warn(
-                        `  ⚠ Field "${pdfFieldName}" couldn't be set`
-                      );
-                    }
-                  }
-                } catch {
-                  console.warn(`  ⚠ Field "${pdfFieldName}" not found`);
-                }
-              });
-            }
-          }
-        );
-
-        // Apply template-specific custom logic
-        if (currentTemplate.customLogic) {
-          currentTemplate.customLogic(form, rowData);
-        }
-
-        const filledPdfBytes = await pdfDoc.save();
-
         const tenantName = rowData["Tenant"] || `Row_${i + 1}`;
         const safeFilename = tenantName
           .replace(/[^a-z0-9]/gi, "_")
           .substring(0, 50);
-        const filename = `${safeFilename}_${i + 1}.pdf`;
 
-        zip.file(filename, filledPdfBytes);
+        console.log(`\n=== Processing Row ${i + 1}: ${tenantName} ===`);
+
+        // Generate each PDF output for this row
+        for (const output of currentTemplate.pdfOutputs) {
+          setProgress(
+            `Processing ${i + 1} of ${csvData.length} - ${output.displayName}...`,
+          );
+
+          const pdfFile = pdfFiles.get(output.filename);
+          if (!pdfFile) {
+            console.warn(`PDF file not found: ${output.filename}`);
+            continue;
+          }
+
+          const pdfTemplateBytes = await pdfFile.arrayBuffer();
+          const pdfDoc = await PDFDocument.load(pdfTemplateBytes);
+          const form = pdfDoc.getForm();
+
+          console.log(`  Filling ${output.displayName}...`);
+
+          // Fill form fields based on output's field mapping
+          Object.entries(output.fieldMapping).forEach(
+            ([csvColumn, pdfFieldNames]) => {
+              const value = rowData[csvColumn];
+              const fieldNamesArray = Array.isArray(pdfFieldNames)
+                ? pdfFieldNames
+                : [pdfFieldNames];
+
+              if (value !== undefined && value !== null && value !== "") {
+                fieldNamesArray.forEach((pdfFieldName) => {
+                  try {
+                    try {
+                      const textField = form.getTextField(pdfFieldName);
+                      textField.setText(String(value));
+                      console.log(
+                        `    ✓ Set text field "${pdfFieldName}" = "${value}"`,
+                      );
+                    } catch {
+                      try {
+                        const checkbox = form.getCheckBox(pdfFieldName);
+                        const isChecked =
+                          value.toLowerCase() === "true" ||
+                          value.toLowerCase() === "yes" ||
+                          value === "1";
+                        if (isChecked) {
+                          checkbox.check();
+                        } else {
+                          checkbox.uncheck();
+                        }
+                        console.log(
+                          `    ✓ Set checkbox "${pdfFieldName}" = ${isChecked}`,
+                        );
+                      } catch {
+                        console.warn(
+                          `    ⚠ Field "${pdfFieldName}" couldn't be set`,
+                        );
+                      }
+                    }
+                  } catch {
+                    console.warn(`    ⚠ Field "${pdfFieldName}" not found`);
+                  }
+                });
+              }
+            },
+          );
+
+          // Apply output-specific custom logic
+          if (output.customLogic) {
+            output.customLogic(form, rowData);
+          }
+
+          const filledPdfBytes = await pdfDoc.save();
+
+          // Create filename with suffix
+          const suffix = output.displayName.toLowerCase().replace(/\s+/g, "_");
+          const filename = `${safeFilename}_${i + 1}_${suffix}.pdf`;
+
+          zip.file(filename, filledPdfBytes);
+          totalPdfsGenerated++;
+        }
       }
 
       setProgress("Creating zip file...");
@@ -227,13 +258,13 @@ export function App() {
 
       setProgress(null);
       setSuccess(
-        `Successfully generated ${csvData.length} PDF(s) and downloaded as zip file!`
+        `Successfully generated ${totalPdfsGenerated} PDF(s) and downloaded as zip file!`,
       );
     } catch (err) {
       setError(
         `Error filling PDFs: ${
           err instanceof Error ? err.message : "Unknown error"
-        }`
+        }`,
       );
       console.error(err);
     } finally {
@@ -346,27 +377,39 @@ export function App() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Field Mapping</CardTitle>
+                <CardTitle>PDF Outputs</CardTitle>
                 <CardDescription>
-                  CSV columns mapped to PDF fields for {currentTemplate.name}
+                  This template will generate{" "}
+                  {currentTemplate.pdfOutputs.length} PDF(s) per row
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  {Object.entries(currentTemplate.fieldMapping).map(
-                    ([csv, pdf]) => (
-                      <div
-                        key={csv}
-                        className="flex items-center gap-2 p-2 bg-gray-50 rounded"
-                      >
-                        <span className="font-mono text-blue-600">{csv}</span>
-                        <span className="text-gray-400">→</span>
-                        <span className="font-mono text-green-600">
-                          {Array.isArray(pdf) ? pdf.join(", ") : pdf}
-                        </span>
+                <div className="space-y-4">
+                  {currentTemplate.pdfOutputs.map((output, index) => (
+                    <div key={index} className="border rounded p-4">
+                      <h4 className="font-semibold mb-2">
+                        {output.displayName}
+                      </h4>
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        {Object.entries(output.fieldMapping).map(
+                          ([csv, pdf]) => (
+                            <div
+                              key={csv}
+                              className="flex items-center gap-2 p-2 bg-gray-50 rounded"
+                            >
+                              <span className="font-mono text-blue-600">
+                                {csv}
+                              </span>
+                              <span className="text-gray-400">→</span>
+                              <span className="font-mono text-green-600">
+                                {Array.isArray(pdf) ? pdf.join(", ") : pdf}
+                              </span>
+                            </div>
+                          ),
+                        )}
                       </div>
-                    )
-                  )}
+                    </div>
+                  ))}
                 </div>
               </CardContent>
             </Card>
@@ -375,7 +418,10 @@ export function App() {
               <Button
                 onClick={fillPdfForm}
                 disabled={
-                  !csvFile || !pdfFile || loading || csvData.length === 0
+                  !csvFile ||
+                  pdfFiles.size === 0 ||
+                  loading ||
+                  csvData.length === 0
                 }
                 size="lg"
                 className="w-full md:w-auto"
@@ -387,7 +433,7 @@ export function App() {
                     <Download className="mr-2 h-5 w-5" />
                     Generate{" "}
                     {csvData.length > 0
-                      ? `${csvData.length} PDFs`
+                      ? `${csvData.length * currentTemplate.pdfOutputs.length} PDFs`
                       : "PDFs"}{" "}
                     (Zip)
                   </>
@@ -401,135 +447,184 @@ export function App() {
   );
 }
 
-// Template 1: Eviction Complaint
+// Template 1: Eviction Complaint and Summons
 const EVICTION_COMPLAINT_TEMPLATE: TemplateConfig = {
   id: "eviction-complaint",
-  name: "Eviction Complaint (JDF101)",
-  pdfFile: "jdf101.pdf",
-  fieldMapping: {
-    County: ["Court County", "7.3"],
-    Landlord: "π",
-    Tenant: ["∆", "7.0"],
-    "Street Address": "7.1",
-    City: "7.2",
-    Zip: "7.4",
-    "Prior Notice": ["8.1", "8.5"],
-    "Prior Notice 2nd": "8.4",
-    "Rent Owed": "10A.2",
-    "Months of Rent": "10A.4",
-    "Rent Per Diem": "10A.5",
-    Damages: "12.1",
-    Total: "12.3",
-  },
-  customLogic: (form, rowData) => {
-    // Set signature dates
-    try {
-      const d = new Date();
-      const dateField = form.getTextField("Sig1_Date");
-      const monthField = form.getTextField("Sig1_Month");
-      const yearField = form.getTextField("Sig1_Year");
+  name: "Eviction Complaint and Summons",
+  pdfOutputs: [
+    {
+      filename: "jdf101.pdf",
+      displayName: "Complaint",
+      fieldMapping: {
+        County: ["Court County", "7.3"],
+        Landlord: "π",
+        Tenant: ["∆", "7.0"],
+        "Street Address": "7.1",
+        City: "7.2",
+        Zip: "7.4",
+        "Prior Notice": ["8.1", "8.5"],
+        "Prior Notice 2nd": "8.4",
+        "Rent Owed": "10A.2",
+        "Months of Rent": "10A.4",
+        "Rent Per Diem": "10A.5",
+        Damages: "12.1",
+        Total: "12.3",
+      },
+      customLogic: (form, rowData) => {
+        // Set signature dates
+        try {
+          const d = new Date();
+          const dateField = form.getTextField("Sig1_Date");
+          const monthField = form.getTextField("Sig1_Month");
+          const yearField = form.getTextField("Sig1_Year");
 
-      dateField.setText(String(d.getDate()));
-      monthField.setText(d.toLocaleString("en-US", { month: "long" }));
-      yearField.setText(String(d.getFullYear()));
-    } catch (error) {
-      console.warn("Could not set signature. " + error);
-    }
-    // Set eviction explanation field
-    try {
-      const EVICTION_EXPLANATION = "Non-payment of utilities and lease charges";
-      const evictionExplanationField = form.getTextField("11.0");
+          dateField.setText(String(d.getDate()));
+          monthField.setText(d.toLocaleString("en-US", { month: "long" }));
+          yearField.setText(String(d.getFullYear()));
+        } catch (error) {
+          console.warn("Could not set signature. " + error);
+        }
 
-      if (!evictionExplanationField) {
-        throw new Error("Field not found.");
-      }
+        // Set eviction explanation field
+        try {
+          const EVICTION_EXPLANATION =
+            "Non-payment of utilities and lease charges";
+          const evictionExplanationField = form.getTextField("11.0");
 
-      const damages = rowData["Damages"];
+          if (!evictionExplanationField) {
+            throw new Error("Field not found.");
+          }
 
-      if (damages) {
-        evictionExplanationField.setText(
-          `${EVICTION_EXPLANATION} in the amount ${damages}`
-        );
-      } else {
-        evictionExplanationField.setText(EVICTION_EXPLANATION);
-      }
-    } catch (e) {
-      console.warn("Could not set eviction explanation field. " + e);
-    }
+          const damages = rowData["Damages"];
 
-    // Set court address based on county
-    try {
-      const textField = form.getTextField("Court Address");
-      const county = rowData["County"] ?? "";
-      const courtInfo = COURT_ADDRESSES.get(county.toLowerCase());
+          if (damages) {
+            evictionExplanationField.setText(
+              `${EVICTION_EXPLANATION} in the amount ${damages}`,
+            );
+          } else {
+            evictionExplanationField.setText(EVICTION_EXPLANATION);
+          }
+        } catch (e) {
+          console.warn("Could not set eviction explanation field. " + e);
+        }
 
-      if (courtInfo) {
-        const { address, city, state, zip } = courtInfo;
-        textField.setText(`${address}, ${city}, ${state} ${zip}`);
-      }
-    } catch {
-      console.warn("Could not set Court Address field");
-    }
+        // Set court address based on county
+        try {
+          const textField = form.getTextField("Court Address");
+          const county = rowData["County"] ?? "";
+          const courtInfo = COURT_ADDRESSES.get(county.toLowerCase());
 
-    // Format interest rate
-    try {
-      const interest = form.getTextField("10A.5");
-      const fullInterest = rowData["Rent Per Diem"];
+          if (courtInfo) {
+            const { address, city, state, zip } = courtInfo;
+            textField.setText(`${address}, ${city}, ${state} ${zip}`);
+          }
+        } catch {
+          console.warn("Could not set Court Address field");
+        }
 
-      if (fullInterest) {
-        const formattedInterest = new Intl.NumberFormat("en-US", {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        }).format(Number(fullInterest));
-        interest.setText(formattedInterest);
-      }
-    } catch {
-      console.warn("Could not format interest rate");
-    }
-  },
+        // Format interest rate
+        try {
+          const interest = form.getTextField("10A.5");
+          const fullInterest = rowData["Rent Per Diem"];
+
+          if (fullInterest) {
+            const formattedInterest = new Intl.NumberFormat("en-US", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            }).format(Number(fullInterest));
+            interest.setText(formattedInterest);
+          }
+        } catch {
+          console.warn("Could not format interest rate");
+        }
+      },
+    },
+    {
+      filename: "jdf_102_v1.pdf",
+      displayName: "Summons",
+      fieldMapping: {
+        County: "Court County",
+        Landlord: "π",
+        Tenant: "∆",
+        "Summons Date": "2A.1",
+        Time: "2A.2",
+      },
+      customLogic: (form, rowData) => {
+        // Set court address
+        try {
+          const textField = form.getTextField("Court Address");
+          const county = rowData["County"] ?? "";
+          const courtInfo = COURT_ADDRESSES.get(county.toLowerCase());
+
+          if (courtInfo) {
+            const { address, city, state, zip } = courtInfo;
+            textField.setText(`${address}, ${city}, ${state} ${zip}`);
+          }
+        } catch {
+          console.warn("Could not set Court Address field");
+        }
+
+        // Set signature dates
+        try {
+          const dateField = form.getTextField("Sig_Date");
+
+          dateField.setText(
+            new Intl.DateTimeFormat("en-US").format(new Date()),
+          );
+        } catch (error) {
+          console.warn("Could not set signature. " + error);
+        }
+      },
+    },
+  ],
 };
 
 // Template 2: Demand for Compliance
 const DFC_TEMPLATE: TemplateConfig = {
   id: "demand-compliance",
   name: "Demand for Compliance (DFC Form)",
-  pdfFile: "dfc_form.pdf",
-  fieldMapping: {
-    Tenant: "0.0",
-    "Rent Owed": "1A.1",
-    "Street Address": "4.1",
-    City: "4.2",
-    County: "4.3",
-    "Monthly Rent": "4.7",
-    "Months of rent": "1A.2",
-    Cure: "0.2",
-    Date: "6.2",
-  },
-  customLogic(form, rowData) {
-    // Remove dollar sign from rent owed
-    try {
-      const cure = form.getTextField("1A.1");
-      const fullCure = rowData["Rent Owed"];
-      if (fullCure) {
-        const formattedCure = fullCure.replace("$", "");
-        cure.setText(formattedCure);
-      }
-    } catch {
-      console.warn("Could not format rent owed");
-    }
+  pdfOutputs: [
+    {
+      filename: "dfc_form.pdf",
+      displayName: "DFC",
+      fieldMapping: {
+        Tenant: "0.0",
+        "Rent Owed": "1A.1",
+        "Street Address": "4.1",
+        City: "4.2",
+        County: "4.3",
+        "Monthly Rent": "4.7",
+        "Months of rent": "1A.2",
+        Cure: "0.2",
+        Date: "6.2",
+      },
+      customLogic(form, rowData) {
+        // Remove dollar sign from rent owed
+        try {
+          const cure = form.getTextField("1A.1");
+          const fullCure = rowData["Rent Owed"];
+          if (fullCure) {
+            const formattedCure = fullCure.replace("$", "");
+            cure.setText(formattedCure);
+          }
+        } catch {
+          console.warn("Could not format rent owed");
+        }
 
-    // Remove dollar sign from monthly rent
-    try {
-      const rent = form.getTextField("4.7");
-      const fullRent = rowData["Monthly Rent"];
-      if (fullRent) {
-        const formattedRent = fullRent.replace("$", "");
-        rent.setText(formattedRent);
-      }
-    } catch {
-      console.warn("Could not format monthly rent");
-    }
-  },
+        // Remove dollar sign from monthly rent
+        try {
+          const rent = form.getTextField("4.7");
+          const fullRent = rowData["Monthly Rent"];
+          if (fullRent) {
+            const formattedRent = fullRent.replace("$", "");
+            rent.setText(formattedRent);
+          }
+        } catch {
+          console.warn("Could not format monthly rent");
+        }
+      },
+    },
+  ],
 };
 
 // All available templates
