@@ -17,7 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import Papa from "papaparse";
-import { PDFDocument, PDFForm } from "pdf-lib";
+import { PDFDocument, type PDFForm } from "pdf-lib";
 import JSZip from "jszip";
 
 interface CSVData {
@@ -450,10 +450,10 @@ export function App() {
 // Template 1: Eviction Complaint and Summons
 const EVICTION_COMPLAINT_TEMPLATE: TemplateConfig = {
   id: "eviction-complaint",
-  name: "Eviction Complaint and Summons",
+  name: "Eviction Complaint, Summons and Affidavit",
   pdfOutputs: [
     {
-      filename: "jdf101.pdf",
+      filename: "jdf_101_v1.pdf",
       displayName: "Complaint",
       fieldMapping: {
         County: ["Court County", "7.3"],
@@ -573,6 +573,30 @@ const EVICTION_COMPLAINT_TEMPLATE: TemplateConfig = {
           );
         } catch (error) {
           console.warn("Could not set signature. " + error);
+        }
+      },
+    },
+    {
+      displayName: "CARES Affidavit",
+      fieldMapping: {
+        County: "court_county",
+        Landlord: "plaintiff",
+        Tenant: "defendants",
+      },
+      filename: "cares_affidavit_v1.pdf",
+      customLogic: (form, rowData) => {
+        // Set court address based on county
+        try {
+          const textField = form.getTextField("court_address");
+          const county = rowData["County"] ?? "";
+          const courtInfo = COURT_ADDRESSES.get(county.toLowerCase());
+
+          if (courtInfo) {
+            const { address, city, state, zip } = courtInfo;
+            textField.setText(`${address}, ${city}, ${state} ${zip}`);
+          }
+        } catch {
+          console.warn("Could not set Court Address field");
         }
       },
     },
