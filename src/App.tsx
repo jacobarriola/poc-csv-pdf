@@ -79,15 +79,15 @@ export function App() {
             loadedPdfs.set(output.filename, file);
 
             // Log PDF field names for debugging (commented out by default)
-            // const pdfBytes = await blob.arrayBuffer();
-            // const pdfDoc = await PDFDocument.load(pdfBytes);
-            // const form = pdfDoc.getForm();
-            // const fields = form.getFields();
-            // console.log(`\n=== PDF Field Names for ${output.displayName} ===`);
-            // fields.forEach((field, index) => {
-            //   console.log(`${index}: "${field.getName()}"`);
-            // });
-            // console.log(`Total fields: ${fields.length}\n`);
+            const pdfBytes = await blob.arrayBuffer();
+            const pdfDoc = await PDFDocument.load(pdfBytes);
+            const form = pdfDoc.getForm();
+            const fields = form.getFields();
+            console.log(`\n=== PDF Field Names for ${output.displayName} ===`);
+            fields.forEach((field, index) => {
+              console.log(`${index}: "${field.getName()}"`);
+            });
+            console.log(`Total fields: ${fields.length}\n`);
           }
           setPdfFiles(loadedPdfs);
           setSuccess(
@@ -458,7 +458,7 @@ const EVICTION_COMPLAINT_TEMPLATE: TemplateConfig = {
       fieldMapping: {
         County: ["Court County", "7.3"],
         Landlord: "π",
-        Tenant: ["∆", "7.0"],
+        Tenant: ["∆", "6.4", "7.0"],
         "Street Address": "7.1",
         City: "7.2",
         Zip: "7.4",
