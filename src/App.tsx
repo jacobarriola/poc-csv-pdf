@@ -79,15 +79,15 @@ export function App() {
             loadedPdfs.set(output.filename, file);
 
             // Log PDF field names for debugging (commented out by default)
-            const pdfBytes = await blob.arrayBuffer();
-            const pdfDoc = await PDFDocument.load(pdfBytes);
-            const form = pdfDoc.getForm();
-            const fields = form.getFields();
-            console.log(`\n=== PDF Field Names for ${output.displayName} ===`);
-            fields.forEach((field, index) => {
-              console.log(`${index}: "${field.getName()}"`);
-            });
-            console.log(`Total fields: ${fields.length}\n`);
+            // const pdfBytes = await blob.arrayBuffer();
+            // const pdfDoc = await PDFDocument.load(pdfBytes);
+            // const form = pdfDoc.getForm();
+            // const fields = form.getFields();
+            // console.log(`\n=== PDF Field Names for ${output.displayName} ===`);
+            // fields.forEach((field, index) => {
+            //   console.log(`${index}: "${field.getName()}"`);
+            // });
+            // console.log(`Total fields: ${fields.length}\n`);
           }
           setPdfFiles(loadedPdfs);
           setSuccess(
@@ -453,7 +453,7 @@ const EVICTION_COMPLAINT_TEMPLATE: TemplateConfig = {
   name: "Eviction Complaint, Summons and Affidavit",
   pdfOutputs: [
     {
-      filename: "jdf_101_v1.pdf",
+      filename: "jdf_101_v_1_1.pdf",
       displayName: "Complaint",
       fieldMapping: {
         County: ["Court County", "7.3"],
@@ -462,8 +462,6 @@ const EVICTION_COMPLAINT_TEMPLATE: TemplateConfig = {
         "Street Address": "7.1",
         City: "7.2",
         Zip: "7.4",
-        "Prior Notice": ["8.1", "8.5"],
-        "Prior Notice 2nd": "8.4",
         "Rent Owed": "10A.2",
         "Months of Rent": "10A.4",
         "Rent Per Diem": "10A.5",
@@ -471,6 +469,32 @@ const EVICTION_COMPLAINT_TEMPLATE: TemplateConfig = {
         Total: "12.3",
       },
       customLogic: (form, rowData) => {
+        // Set prior notice dates, conditionally based on presence of first and second dates
+        try {
+          const priorNotice = rowData["Prior Notice"];
+          const priorNoticeSecond = rowData["Prior Notice 2nd"];
+
+          if (priorNotice && priorNoticeSecond) {
+            const noticeField = form.getTextField("8.4");
+            const noticeFieldSecond = form.getTextField("8.5");
+            const groupField = form.getRadioGroup("Group8.3");
+
+            groupField.select(
+              "Posting on the property (after two failed attempts at personal service).  Enter attempt dates in the provided fields.",
+            );
+            noticeField.setText(priorNotice);
+            noticeFieldSecond.setText(priorNoticeSecond);
+          } else if (priorNotice) {
+            const noticeField = form.getTextField("8.1");
+            const groupField = form.getRadioGroup("Group8.2");
+
+            groupField.select("Demand for Compliance (JDF 99 A).");
+            noticeField.setText(priorNotice);
+          }
+        } catch (error) {
+          console.warn("Could not set prior notice dates. " + error);
+        }
+
         // Set signature dates
         try {
           const d = new Date();
